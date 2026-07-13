@@ -24,16 +24,24 @@ typedef struct {
   GtkWidget *box, *icon, *label, *popover, *scale;
   double vol; int muted, step, updating;
   GCancellable *cancel; GSubprocess *sub;
+  char *icon_dir; int icon_size;
 } Inst;
 
-static const char *vol_glyph(Inst *s) {
-  if (s->muted || s->vol <= 0.001) return IC_MUTE;
-  if (s->vol < 0.34) return IC_LOW;
-  if (s->vol < 0.67) return IC_MED;
-  return IC_HIGH;
+static const char *vol_icon_name(Inst *s) {
+  if (s->muted || s->vol <= 0.001) return "vol-mute.svg";
+  if (s->vol < 0.34) return "vol-low.svg";
+  if (s->vol < 0.67) return "vol-med.svg";
+  return "vol-high.svg";
+}
+static GdkPixbuf *vol_pixbuf(Inst *self, const char *name) {
+  char *path = g_build_filename(self->icon_dir, name, NULL);
+  GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(path, self->icon_size, self->icon_size, NULL);
+  g_free(path);
+  return pb;
 }
 static void update_bar(Inst *self) {
-  gtk_label_set_text(GTK_LABEL(self->icon), vol_glyph(self));
+  GdkPixbuf *pb = vol_pixbuf(self, vol_icon_name(self));
+  if (pb) { gtk_image_set_from_pixbuf(GTK_IMAGE(self->icon), pb); g_object_unref(pb); }
   char t[16]; g_snprintf(t, sizeof t, "%d%%", (int)lround(self->vol * 100));
   gtk_label_set_text(GTK_LABEL(self->label), t);
   GtkStyleContext *c = gtk_widget_get_style_context(self->box);
@@ -112,7 +120,9 @@ static void rebuild_popover(Inst *self) {
   gtk_style_context_add_class(gtk_widget_get_style_context(v), "vo-pop");
 
   GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-  GtkWidget *mute = gtk_button_new_with_label(vol_glyph(self));
+  GtkWidget *mute = gtk_button_new();
+  { GdkPixbuf *mpb = vol_pixbuf(self, vol_icon_name(self));
+    if (mpb) { GtkWidget *mi = gtk_image_new_from_pixbuf(mpb); g_object_unref(mpb); gtk_button_set_image(GTK_BUTTON(mute), mi); } }
   gtk_style_context_add_class(gtk_widget_get_style_context(mute), "vo-mute");
   g_signal_connect(mute, "clicked", G_CALLBACK(on_mute_clicked), self);
   self->scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
@@ -193,13 +203,23 @@ static void start_subscribe(Inst *self) {
 }
 
 static GtkWidget *mklabel(const char *t, const char *cls) {
-  GtkWidget *l = gtk_label_new(t); gtk_style_context_add_class(gtk_widget_get_style_context(l), cls); return l;
+  GtkWidget *l = gtk_label_new(t);
+  gtk_widget_set_valign(l, GTK_ALIGN_CENTER);
+  gtk_style_context_add_class(gtk_widget_get_style_context(l), cls); return l;
 }
 void *wbcffi_init(const wbcffi_init_info *info, const wbcffi_config_entry *entries, size_t entries_len) {
   Inst *self = g_new0(Inst, 1);
-  self->step = 5;
-  for (size_t i = 0; i < entries_len; i++)
+  self->step = 5; self->icon_size = 24;
+  for (size_t i = 0; i < entries_len; i++) {
     if (!strcmp(entries[i].key, "scroll-step")) { self->step = atoi(entries[i].value); if (self->step < 1) self->step = 1; }
+    else if (!strcmp(entries[i].key, "icon-size")) { self->icon_size = atoi(entries[i].value); if (self->icon_size < 8) self->icon_size = 8; }
+    else if (!strcmp(entries[i].key, "icon-dir")) { g_free(self->icon_dir); self->icon_dir = g_strdup(entries[i].value); }
+  }
+  if (!self->icon_dir) {
+    const char *dh = g_getenv("XDG_DATA_HOME");
+    self->icon_dir = (dh && *dh) ? g_build_filename(dh, "waybar-volume", NULL)
+                                 : g_build_filename(g_get_home_dir(), ".local/share/waybar-volume", NULL);
+  }
   self->cancel = g_cancellable_new();
 
   GtkContainer *root = info->get_root_widget(info->obj);
@@ -208,7 +228,9 @@ void *wbcffi_init(const wbcffi_init_info *info, const wbcffi_config_entry *entri
   gtk_widget_add_events(self->box, GDK_BUTTON_PRESS_MASK | GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
   gtk_widget_set_margin_start(self->box, 6); gtk_widget_set_margin_end(self->box, 6);
   GtkWidget *h = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-  self->icon = mklabel(IC_HIGH, "vo-icon");
+  self->icon = gtk_image_new();
+  gtk_widget_set_valign(self->icon, GTK_ALIGN_CENTER);
+  gtk_style_context_add_class(gtk_widget_get_style_context(self->icon), "vo-icon");
   self->label = mklabel("--%", "vo-label");
   gtk_box_pack_start(GTK_BOX(h), self->icon, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(h), self->label, FALSE, FALSE, 0);
@@ -233,5 +255,6 @@ void wbcffi_deinit(void *instance) {
   if (self->cancel) g_cancellable_cancel(self->cancel);
   if (self->sub) { g_subprocess_force_exit(self->sub); g_object_unref(self->sub); }
   g_clear_object(&self->cancel);
+  g_free(self->icon_dir);
   g_free(self);
 }
