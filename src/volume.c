@@ -205,26 +205,34 @@ static gboolean on_click(GtkWidget *w, GdkEventButton *ev, gpointer data) {
 }
 
 // ─── pactl subscribe (event-driven refresh) ─────────────────────────────────
-static void read_next(Inst *self, GDataInputStream *in);
+// The reader owns its own ref to the cancellable + stream, so it stays valid even
+// after `self` is freed on teardown. It checks cancellation BEFORE touching `self`
+// — this fixes a use-after-free crash when a reload (matugen SIGUSR2) tears the
+// module down while a subscribe read is pending.
+typedef struct { Inst *self; GDataInputStream *in; GCancellable *cancel; } VReader;
+static void vreader_next(VReader *r);
+static void vreader_free(VReader *r) { g_object_unref(r->cancel); g_object_unref(r->in); g_free(r); }
 static void on_line(GObject *src, GAsyncResult *res, gpointer data) {
-  Inst *self = data; GDataInputStream *in = G_DATA_INPUT_STREAM(src);
-  gsize len = 0; char *line = g_data_input_stream_read_line_finish(in, res, &len, NULL);
-  if (g_cancellable_is_cancelled(self->cancel)) { g_free(line); g_object_unref(in); return; }
-  if (!line) { g_object_unref(in); return; }   // stream closed
-  if (strstr(line, "sink") || strstr(line, "server")) read_volume(self);
+  VReader *r = data;
+  gsize len = 0; char *line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(src), res, &len, NULL);
+  if (g_cancellable_is_cancelled(r->cancel) || !line) { g_free(line); vreader_free(r); return; }
+  if (strstr(line, "sink") || strstr(line, "server")) read_volume(r->self);
   g_free(line);
-  read_next(self, in);
+  vreader_next(r);
 }
-static void read_next(Inst *self, GDataInputStream *in) {
-  g_data_input_stream_read_line_async(in, G_PRIORITY_DEFAULT, self->cancel, on_line, self);
+static void vreader_next(VReader *r) {
+  g_data_input_stream_read_line_async(r->in, G_PRIORITY_DEFAULT, r->cancel, on_line, r);
 }
 static void start_subscribe(Inst *self) {
   self->sub = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
                                NULL, "pactl", "subscribe", NULL);
   if (!self->sub) return;
   GInputStream *st = g_subprocess_get_stdout_pipe(self->sub);
-  GDataInputStream *in = g_data_input_stream_new(st);
-  read_next(self, in);
+  VReader *r = g_new0(VReader, 1);
+  r->self = self;
+  r->in = g_data_input_stream_new(st);
+  r->cancel = g_object_ref(self->cancel);
+  vreader_next(r);
 }
 
 static GtkWidget *mklabel(const char *t, const char *cls) {
