@@ -153,7 +153,11 @@ static GtkWidget *device_list(GtkWidget *v, const char *kind, const char *set_cm
       else if (g_str_has_prefix(t, "Description: ") && cur_name[0]) {
         if (skip_monitors && g_str_has_suffix(cur_name, ".monitor")) { cur_name[0] = 0; g_free(t); continue; }
         GtkWidget *b = gtk_button_new_with_label(t + 13);
-        gtk_widget_set_halign(gtk_bin_get_child(GTK_BIN(b)), GTK_ALIGN_START);
+        GtkWidget *bl = gtk_bin_get_child(GTK_BIN(b));
+        gtk_widget_set_halign(bl, GTK_ALIGN_START);
+        // very long device names would widen the popup: ellipsize past ~38 chars
+        gtk_label_set_ellipsize(GTK_LABEL(bl), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(bl), 38);
         gtk_style_context_add_class(gtk_widget_get_style_context(b), "vo-sink");
         if (def && !strcmp(def, cur_name)) {
           gtk_style_context_add_class(gtk_widget_get_style_context(b), "vo-active");
