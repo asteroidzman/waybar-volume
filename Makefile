@@ -15,6 +15,12 @@ install: $(PLUGIN)
 	install -Dm644 -t $(DATADIR) assets/vol-mute.svg assets/vol-low.svg assets/vol-med.svg assets/vol-high.svg assets/mic.svg assets/mic-mute.svg
 	@echo "installed to $(PREFIX)/$(PLUGIN) + icons in $(DATADIR)"
 
+test_volume: tests/test_volume.c src/volume.c $(WBCOMMON)/wbcommon.h
+	$(CC) $(CFLAGS) -o $@ tests/test_volume.c $(LDLIBS)
+
+test: test_volume
+	./test_volume
+
 clean:
-	rm -f $(PLUGIN)
-.PHONY: install clean
+	rm -f $(PLUGIN) test_volume
+.PHONY: install clean test
