@@ -16,6 +16,8 @@ slider and an output-device picker. PipeWire via `wpctl`, event-driven off
 
 ## Build & install
 
+Arch Linux: `yay -S waybar-volume` (AUR).
+
 Requires `gtk3`, `glib2` (+dev headers), `wireplumber` (`wpctl`), `libpulse`
 (`pactl`) and a C compiler.
 
